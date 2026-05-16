@@ -1,0 +1,8 @@
+/build/
+/data/
+/api
+/lb
+/build-index
+*.o
+*.idx
+*.log

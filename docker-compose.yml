@@ -1,0 +1,55 @@
+services:
+  api1: &api
+    image: mxlange/c-api-rinha2026:latest
+    environment:
+      - FD_SOCKET=/run/sock/api1.sock
+      - INDEX_PATH=/app/data/knn.idx
+    volumes:
+      - sock:/run/sock
+    deploy:
+      resources:
+        limits:
+          cpus: "0.45"
+          memory: "165M"
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+
+  api2:
+    <<: *api
+    environment:
+      - FD_SOCKET=/run/sock/api2.sock
+      - INDEX_PATH=/app/data/knn.idx
+
+  lb:
+    image: mxlange/c-api-rinha2026:latest
+    command: ["/app/lb"]
+    depends_on:
+      - api1
+      - api2
+    ports:
+      - "9999:9999"
+    environment:
+      - PORT=9999
+      - FD_UPSTREAMS=/run/sock/api1.sock,/run/sock/api2.sock
+      - WORKERS=2
+    volumes:
+      - sock:/run/sock
+    deploy:
+      resources:
+        limits:
+          cpus: "0.1"
+          memory: "20M"
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+
+volumes:
+  sock:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=10m
