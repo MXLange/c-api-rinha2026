@@ -1,6 +1,6 @@
 FROM debian:bookworm AS build
 
-ARG RINHA_LEAF_SIZE=128
+ARG RINHA_LEAF_SIZE=96
 ARG RINHA_EARLY_DISTANCE_MILLI=140
 ARG CFLAGS_EXTRA="-O3 -march=haswell -mtune=haswell -mavx2 -flto -fno-plt -DNDEBUG -std=c11 -Wall -Wextra -Wshadow"
 

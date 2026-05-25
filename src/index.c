@@ -65,7 +65,11 @@ bool index_open(Index *idx, const char *path) {
     }
 
     size_t size = (size_t)st.st_size;
-    uint8_t *data = mmap(NULL, size, PROT_READ, MAP_SHARED, fd, 0);
+    int mmap_flags = MAP_SHARED;
+#ifdef MAP_POPULATE
+    mmap_flags |= MAP_POPULATE;
+#endif
+    uint8_t *data = mmap(NULL, size, PROT_READ, mmap_flags, fd, 0);
     close(fd);
     if (data == MAP_FAILED) return false;
 
@@ -159,20 +163,52 @@ static inline void sort_candidates(Candidate *items, int count) {
     }
 }
 
+static inline int64_t lower_bound_vec_fast(const QueryVector q, const QueryVector min, const QueryVector max) {
+    const __m256i qv = _mm256_loadu_si256((const __m256i *)(const void *)q);
+    const __m256i mn = _mm256_loadu_si256((const __m256i *)(const void *)min);
+    const __m256i mx = _mm256_loadu_si256((const __m256i *)(const void *)max);
+    const __m256i zero = _mm256_setzero_si256();
+    const __m256i below = _mm256_max_epi16(_mm256_sub_epi16(mn, qv), zero);
+    const __m256i above = _mm256_max_epi16(_mm256_sub_epi16(qv, mx), zero);
+    const __m256i diff = _mm256_max_epi16(below, above);
+    const __m256i sq = _mm256_madd_epi16(diff, diff);
+    const __m256i lo = _mm256_cvtepi32_epi64(_mm256_castsi256_si128(sq));
+    const __m256i hi = _mm256_cvtepi32_epi64(_mm256_extracti128_si256(sq, 1));
+    const __m256i sum256 = _mm256_add_epi64(lo, hi);
+    __m128i sum128 = _mm_add_epi64(_mm256_castsi256_si128(sum256), _mm256_extracti128_si256(sum256, 1));
+    sum128 = _mm_add_epi64(sum128, _mm_unpackhi_epi64(sum128, sum128));
+    return _mm_cvtsi128_si64(sum128);
+}
+
 static inline void distance_block8(const int16_t *block, const QueryVector query, int64_t out[RINHA_LANES]) {
     __m256i acc_lo = _mm256_setzero_si256();
     __m256i acc_hi = _mm256_setzero_si256();
-    for (int d = 0; d < RINHA_DIMS; d++) {
-        const __m128i packed = _mm_loadu_si128((const __m128i *)(const void *)(block + d * RINHA_LANES));
-        const __m256i values = _mm256_cvtepi16_epi32(packed);
-        const __m256i q = _mm256_set1_epi32((int)query[d]);
-        const __m256i diff = _mm256_sub_epi32(values, q);
-        const __m256i sq = _mm256_mullo_epi32(diff, diff);
-        const __m128i sq_lo = _mm256_castsi256_si128(sq);
-        const __m128i sq_hi = _mm256_extracti128_si256(sq, 1);
-        acc_lo = _mm256_add_epi64(acc_lo, _mm256_cvtepi32_epi64(sq_lo));
-        acc_hi = _mm256_add_epi64(acc_hi, _mm256_cvtepi32_epi64(sq_hi));
+    __m128i acc32_lo = _mm_setzero_si128();
+    __m128i acc32_hi = _mm_setzero_si128();
+
+    for (int d = 0; d < RINHA_DIMS; d += 2) {
+        const __m128i q0 = _mm_set1_epi16(query[d]);
+        const __m128i q1 = _mm_set1_epi16(query[d + 1]);
+        const __m128i v0 = _mm_loadu_si128((const __m128i *)(const void *)(block + d * RINHA_LANES));
+        const __m128i v1 = _mm_loadu_si128((const __m128i *)(const void *)(block + (d + 1) * RINHA_LANES));
+        const __m128i diff0 = _mm_sub_epi16(q0, v0);
+        const __m128i diff1 = _mm_sub_epi16(q1, v1);
+        const __m128i lo = _mm_unpacklo_epi16(diff0, diff1);
+        const __m128i hi = _mm_unpackhi_epi16(diff0, diff1);
+
+        acc32_lo = _mm_add_epi32(acc32_lo, _mm_madd_epi16(lo, lo));
+        acc32_hi = _mm_add_epi32(acc32_hi, _mm_madd_epi16(hi, hi));
+
+        if (((d + 2) & 3) == 0) {
+            acc_lo = _mm256_add_epi64(acc_lo, _mm256_cvtepi32_epi64(acc32_lo));
+            acc_hi = _mm256_add_epi64(acc_hi, _mm256_cvtepi32_epi64(acc32_hi));
+            acc32_lo = _mm_setzero_si128();
+            acc32_hi = _mm_setzero_si128();
+        }
     }
+
+    acc_lo = _mm256_add_epi64(acc_lo, _mm256_cvtepi32_epi64(acc32_lo));
+    acc_hi = _mm256_add_epi64(acc_hi, _mm256_cvtepi32_epi64(acc32_hi));
     _mm256_storeu_si256((__m256i *)(void *)out, acc_lo);
     _mm256_storeu_si256((__m256i *)(void *)(out + 4), acc_hi);
 }
@@ -193,6 +229,15 @@ static inline bool scan_leaf(const Index *idx, const Node *n, const QueryVector 
         const int labels_base = block * RINHA_LANES;
         int lane_count = length - b * RINHA_LANES;
         if (lane_count > RINHA_LANES) lane_count = RINHA_LANES;
+
+        if (b + 1 < blocks) {
+            const int next_base = (start_block + b + 1) * RINHA_DIMS * RINHA_LANES;
+            _mm_prefetch((const char *)(const void *)(idx->vectors + next_base), _MM_HINT_T0);
+            _mm_prefetch((const char *)(const void *)(idx->vectors + next_base + 32), _MM_HINT_T0);
+            _mm_prefetch((const char *)(const void *)(idx->vectors + next_base + 64), _MM_HINT_T0);
+            _mm_prefetch((const char *)(const void *)(idx->vectors + next_base + 96), _MM_HINT_T0);
+            _mm_prefetch((const char *)(const void *)(idx->labels + (start_block + b + 1) * RINHA_LANES), _MM_HINT_T0);
+        }
 
         int64_t dists[RINHA_LANES];
         distance_block8(idx->vectors + base, query, dists);
@@ -222,8 +267,9 @@ static bool search_node(const Index *idx, int root, int64_t root_bound, const Qu
             } else {
                 const int left = n->left;
                 const int right = n->right;
-                const int64_t lb = lower_bound_vec(query, idx->nodes[left].min, idx->nodes[left].max);
-                const int64_t rb = lower_bound_vec(query, idx->nodes[right].min, idx->nodes[right].max);
+                _mm_prefetch((const char *)(const void *)&idx->nodes[right], _MM_HINT_T0);
+                const int64_t lb = lower_bound_vec_fast(query, idx->nodes[left].min, idx->nodes[left].max);
+                const int64_t rb = lower_bound_vec_fast(query, idx->nodes[right].min, idx->nodes[right].max);
 
                 if (lb <= rb) {
                     if (rb < best_dists[RINHA_K - 1] && stack_len < 128) {
@@ -275,7 +321,7 @@ uint8_t index_predict_fraud_count(const Index *idx, const QueryVector query) {
     int count = 0;
     for (int i = 0; i < idx->part_count; i++) {
         if (i == match) continue;
-        const int64_t bound = lower_bound_vec(query, idx->partitions[i].min, idx->partitions[i].max);
+        const int64_t bound = lower_bound_vec_fast(query, idx->partitions[i].min, idx->partitions[i].max);
         if (bound >= best_dists[RINHA_K - 1]) continue;
         candidates[count].idx = i;
         candidates[count].bound = bound;
