@@ -10,8 +10,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.225"
-          memory: "82.5M"
+          cpus: "0.45"
+          memory: "165M"
     ulimits:
       nofile:
         soft: 65535
@@ -21,18 +21,6 @@ services:
     <<: *api
     environment:
       - FD_SOCKET=/run/sock/api2.sock
-      - INDEX_PATH=/app/data/knn.idx
-
-  api3:
-    <<: *api
-    environment:
-      - FD_SOCKET=/run/sock/api3.sock
-      - INDEX_PATH=/app/data/knn.idx
-
-  api4:
-    <<: *api
-    environment:
-      - FD_SOCKET=/run/sock/api4.sock
       - INDEX_PATH=/app/data/knn.idx
 
   lb:
@@ -46,7 +34,7 @@ services:
       - "9999:9999"
     environment:
       - PORT=9999
-      - FD_UPSTREAMS=/run/sock/api1.sock,/run/sock/api2.sock,/run/sock/api3.sock,/run/sock/api4.sock
+      - FD_UPSTREAMS=/run/sock/api1.sock,/run/sock/api2.sock
       - WORKERS=4
     volumes:
       - sock:/run/sock
