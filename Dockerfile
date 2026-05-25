@@ -1,7 +1,7 @@
 FROM debian:bookworm AS build
 
-ARG RINHA_LEAF_SIZE=96
-ARG RINHA_EARLY_DISTANCE_MILLI=140
+ARG RINHA_LEAF_SIZE=24
+ARG RINHA_EARLY_DISTANCE_MILLI=160
 ARG CFLAGS_EXTRA="-O3 -march=haswell -mtune=haswell -mavx2 -flto -fno-plt -DNDEBUG -std=c11 -Wall -Wextra -Wshadow"
 
 RUN apt-get update \
