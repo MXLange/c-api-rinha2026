@@ -1,6 +1,7 @@
 services:
   api1: &api
     image: mxlange/c-api-rinha2026:latest
+    pull_policy: always
     environment:
       - FD_SOCKET=/run/sock/api1.sock
       - INDEX_PATH=/app/data/knn.idx
@@ -36,6 +37,7 @@ services:
 
   lb:
     image: mxlange/c-api-rinha2026:latest
+    pull_policy: always
     command: ["/app/lb"]
     depends_on:
       - api1
