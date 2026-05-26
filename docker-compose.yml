@@ -35,7 +35,7 @@ services:
     environment:
       - PORT=9999
       - FD_UPSTREAMS=/run/sock/api1.sock,/run/sock/api2.sock
-      - WORKERS=4
+      - WORKERS=2
     volumes:
       - sock:/run/sock
     deploy:
