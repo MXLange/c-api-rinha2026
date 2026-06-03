@@ -2,6 +2,7 @@ services:
   api1: &api
     image: mxlange/c-api-rinha2026:latest
     pull_policy: always
+    cpuset: "0"
     environment:
       - FD_SOCKET=/run/sock/api1.sock
       - INDEX_PATH=/app/data/knn.idx
@@ -19,6 +20,7 @@ services:
 
   api2:
     <<: *api
+    cpuset: "1"
     environment:
       - FD_SOCKET=/run/sock/api2.sock
       - INDEX_PATH=/app/data/knn.idx
@@ -26,6 +28,7 @@ services:
   lb:
     image: mxlange/c-api-rinha2026:latest
     pull_policy: always
+    cpuset: "2,3"
     command: ["/app/lb"]
     depends_on:
       - api1
